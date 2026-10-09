@@ -1,45 +1,65 @@
 # Agent-Optimized Docs Formatter (`agent-docs-formatter`)
 
-This skill transforms standard, human-readable documentation into a strictly structured, database-like Markdown format. This format is optimized for terminal-based AI coding agents to search and extract context cheaply using standard UNIX text-processing commands (`grep` and `awk`), saving tokens and improving context relevance.
+Transforms standard, human-readable documentation into a strictly structured, database-like Markdown format. Terminal-based AI coding agents can then search and extract context cheaply with standard UNIX tools (`grep` and `awk`), saving tokens and keeping context relevant.
 
 ## Why use this?
 
-Terminal AI agents (like Claude Code, Cursor, or local CLI agents) often read entire documentation files just to find one rule, which consumes massive amounts of context window and slows down reasoning. 
+Terminal AI agents (Claude Code, Cursor, local CLI agents) often read an entire documentation file to find one rule. That consumes context window and dilutes relevance.
 
-By applying strict namespaces, primary keys, and deterministic block delimiters, this formatter allows an agent to:
-1. **Discover** available rules instantly via a cheap `grep` command.
-2. **Extract** only the specific rule it needs via a targeted `awk` command.
+With namespaces, primary keys and deterministic block delimiters, an agent can:
+
+1. **Discover** the available rules with one cheap `grep`.
+2. **Extract** only the block it needs with one targeted `awk`.
 
 ## Performance Impact & Metrics
 
-Converting standard documentation to Agent-Optimized Markdown yields significant performance improvements for LLM tooling:
+Measured on the karst repo: 38 keyed docs, 3–45 KB each. Figures are bytes read (TOC `grep` + one block via `awk`) versus reading the whole file. Tokens are roughly 1/4–1/3 of bytes.
 
-| Metric | Standard Docs (Full Read) | Agent-Optimized (Grep + Awk) | Impact |
-| :--- | :--- | :--- | :--- |
-| **Context Window Usage** | `O(N)` (Entire file length) | `O(1)` (Specific block length) | Up to 99% smaller context payload |
-| **Token Consumption** | ~10k-50k+ tokens per read | ~100 tokens (`grep`) + ~500 (`awk`) | 95%+ token cost reduction |
-| **Agent Reasoning Latency** | High (processing massive context) | Low (laser-focused context) | Faster Time-to-First-Token (TTFB) |
-| **Hallucination Risk** | Moderate (distracted by irrelevant rules) | Near Zero (only views relevant block) | Higher code generation accuracy |
+| Metric | Standard docs (full read) | Agent-optimized (grep + awk) | Measured impact |
+|---|---|---|---|
+| Context per lookup | O(file size) | O(#keys) for the TOC + O(block size) | Large docs (≥13 KB): ~5–12% of file. Small docs (~3 KB): ~35–40% |
+| Typical cost | 3–45 KB per read | 0.1–0.7 KB TOC + 0.9–5 KB block | 62–95% fewer bytes, depending on doc size |
+| Best / worst case | n/a | Best: 935 B of 20,957 B (4.5%). Worst: 1,090 B of 2,839 B (38%) | Savings grow with file size |
+
+### Sample lookups
+
+| Doc / key | Keyed read | Whole file | Share |
+|---|---|---|---|
+| `artifacts spec` / `ART-14` | 935 B | 20,957 B | 4.5% |
+| `store-and-schema` / `arch:SCHEMA-CHECK` | 1,397 B | 24,646 B | 6% |
+| `glossary` / `GL-01` | 3,240 B | 41,785 B | 7.8% |
+| `HOOK-CONTRACT` / `HOOK-04` | 1,415 B | 13,938 B | 10% |
+| `agent-cores` / `arch:AC-13` | 4,459 B | 44,991 B | 10% |
+| `uat-stuck` / `UAT-03` | 1,090 B | 2,839 B | 38% |
+
+### Caveats
+
+- Cost is not constant. The TOC grep scales with the number of keys and is the largest share of the cost on most lookups.
+- Block size matters. A 7.6 KB block in a 24 KB file saves little, so split blocks over about 4 KB.
+- Tiny files (under ~5 KB) and files with 2 blocks gain little from keying.
+- Latency and answer accuracy were not measured here. Smaller context should help both, but treat that as a hypothesis until tested.
+- Count blocks with `grep -c '^END_DOC_BLOCK'`. The header example line also contains the marker and inflates a plain count by one.
 
 ## Features
 
-* **Invisible Agent API:** Automatically injects HTML comment blocks at the top of the file containing exact `grep` and `awk` commands, teaching the AI agent how to query the document efficiently.
-* **Namespace Governance:** Enforces strict namespaces (e.g., `arch`, `ui`, `core`) to prevent primary key collisions across large codebases.
-* **Canonical Key Headers:** Rewrites broad `##` headings into unique, searchable primary keys (e.g., `## [@ui:AUTH-01] Token Management`).
-* **Heading Normalization:** Demotes minor headings to `###` or `####` so that `##` is exclusively reserved for top-level queryable blocks.
-* **Strict Block Delimiters:** Caps every conceptual block with a deterministic end-marker (e.g., `END_DOC_BLOCK: [@ui:AUTH-01]`) to ensure clean `awk` extractions without bleeding into the next section.
+- **Invisible Agent API:** Injects an HTML comment at the top of the file with the exact `grep` and `awk` commands, teaching the agent how to query the document.
+- **Namespace Governance:** Enforces namespaces (e.g. `arch`, `ui`, `core`) so primary keys never collide across files.
+- **Canonical Key Headers:** Rewrites broad `##` headings into unique, searchable keys (e.g. `## [@ui:AUTH-01] Token Management`).
+- **Heading Normalization:** Demotes minor headings to `###` or `####`, so `##` is reserved for top-level queryable blocks.
+- **Strict Block Delimiters:** Closes every block with an end marker (e.g. `END_DOC_BLOCK: [@ui:AUTH-01]`) so `awk` extractions never bleed into the next section.
 
 ## Usage
 
-When you have a raw Markdown file (or a draft of documentation) that you want to optimize for your AI agent, invoke the skill:
+Invoke the skill on a raw Markdown file or draft:
 
 > "Format my architecture rules using the agent-docs-formatter. Use the namespace `arch` and the file path `docs/architecture.md`."
 
-If you do not provide a namespace or file path, the formatter will default to the namespace `def` and the file path `docs/DRAFT.md`.
+If you give no namespace or file path, the formatter defaults to namespace `def` and file path `docs/DRAFT.md`.
 
 ## Example Transformation
 
-### Before (Standard Markdown)
+### Before (standard Markdown)
+
 ```markdown
 ## Handling Database Errors
 Always catch SQLite errors at the repository layer. Don't let them bubble up to the express routers.
@@ -48,7 +68,8 @@ Always catch SQLite errors at the repository layer. Don't let them bubble up to 
 Cache user sessions for 24 hours. Invalidate on password reset.
 ```
 
-### After (Agent-Optimized Markdown)
+### After (agent-optimized Markdown)
+
 ```markdown
 <!-- AGENT INSTRUCTIONS:
 This file uses an agent-optimized block format. DO NOT read this file entirely.
@@ -56,7 +77,7 @@ This file uses an agent-optimized block format. DO NOT read this file entirely.
   grep -F "## [@" docs/architecture.md
 
 2. EXTRACT A RULE: Run this to read a specific block (Example for ID 'arch:DB-01'):
-  awk "/^## [@arch:DB-01]/,/END_DOC_BLOCK: [@arch:DB-01]/" docs/architecture.md
+  awk "/^## \[@arch:DB-01\]/,/END_DOC_BLOCK: \[@arch:DB-01\]/" docs/architecture.md
 -->
 
 ## [@arch:DB-01] Handling Database Errors
@@ -67,3 +88,12 @@ END_DOC_BLOCK: [@arch:DB-01]
 Cache user sessions for 24 hours. Invalidate on password reset.
 END_DOC_BLOCK: [@arch:CACHE-01]
 ```
+
+### Extraction notes
+
+- Brackets must be escaped in the awk regex (`\[` and `\]`). Unescaped, they form a character class and the pattern fails.
+- IDs containing regex characters (e.g. `ui:11.12`) match loosely. A literal-match extract avoids that:
+
+  ```sh
+  awk -v id="[@arch:DB-01]" 'index($0,"## " id)==1{p=1} p{print} index($0,"END_DOC_BLOCK: " id)==1{exit}' docs/architecture.md
+  ```
