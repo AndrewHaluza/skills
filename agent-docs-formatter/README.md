@@ -76,8 +76,11 @@ This file uses an agent-optimized block format. DO NOT read this file entirely.
 1. TABLE OF CONTENTS: Run this to list all available keys:
   grep -F "## [@" docs/architecture.md
 
-2. EXTRACT A RULE: Run this to read a specific block (Example for ID 'arch:DB-01'):
-  awk "/^## \[@arch:DB-01\]/,/END_DOC_BLOCK: \[@arch:DB-01\]/" docs/architecture.md
+2. EXTRACT A BLOCK: Run this to read one block (example key 'arch:DB-01'):
+  awk -v id="[@arch:DB-01]" 'index($0,"## " id)==1{p=1} p{print} index($0,"END_DOC_BLOCK: " id)==1{exit}' docs/architecture.md
+
+3. FOLLOW A LINK: a reference `@ns:ID` names another block. Find its file with:
+  grep -rlF "## [@ns:ID]" docs
 -->
 
 ## [@arch:DB-01] Handling Database Errors
